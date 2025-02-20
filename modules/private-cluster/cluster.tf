@@ -25,15 +25,15 @@ resource "google_container_cluster" "primary" {
   name            = var.name
   description     = var.description
   project         = var.project_id
-  resource_labels = var.cluster_resource_labels
+  resource_labels = var.cluster_resource_labels ## key - value map(string)
 
-  location            = local.location
-  node_locations      = local.node_locations
-  cluster_ipv4_cidr   = var.cluster_ipv4_cidr
-  network             = "projects/${local.network_project_id}/global/networks/${var.network}"
+  location            = local.location           # var.regional ? var.region : var.zones[0]
+  node_locations      = local.node_locations     # var.regional ? coalescelist(compact(var.zones), try(sort(random_shuffle.available_zones[0].result), [])) : slice(var.zones, 1, length(var.zones))
+  cluster_ipv4_cidr   = var.cluster_ipv4_cidr    
+  network             = "projects/${local.network_project_id}/global/networks/${var.network}" ## var.network_project_id != "" ? var.network_project_id : var.project_id
   deletion_protection = var.deletion_protection
 
-  dynamic "network_policy" {
+  dynamic "network_policy" { ## Pod 간의 트래픽을 제어 ##  기본적으로 GKE의 모든 Pod는 서로 자유롭게 통신할 수 있음.
     for_each = local.cluster_network_policy
 
     content {
@@ -42,7 +42,7 @@ resource "google_container_cluster" "primary" {
     }
   }
 
-  dynamic "release_channel" {
+  dynamic "release_channel" { ## 어떤 속도로 GKE 클러스터의 Kubernetes 버전을 업그레이드할지 선택
     for_each = local.release_channel
 
     content {
@@ -50,7 +50,7 @@ resource "google_container_cluster" "primary" {
     }
   }
 
-  dynamic "gateway_api_config" {
+  dynamic "gateway_api_config" { ## Ingress보다 더 강력한 네트워크 트래픽 관리 기능을 제공하는 API <= ?????????????????
     for_each = local.gateway_api_config
 
     content {
@@ -58,14 +58,14 @@ resource "google_container_cluster" "primary" {
     }
   }
 
-  dynamic "cost_management_config" {
+  dynamic "cost_management_config" { ## Google Kubernetes Engine(GKE)에서 비용 관리 기능을 활성화 ## GKE의 리소스 사용량을 Google Cloud Billing과 통합하여 비용을 분석할 수 있습니다.
     for_each = var.enable_cost_allocation ? [1] : []
     content {
       enabled = var.enable_cost_allocation
     }
   }
 
-  dynamic "confidential_nodes" {
+  dynamic "confidential_nodes" { ## Confidential Computing 기능을 활성화하는 설정 ## 노드(VM)에서 실행되는 워크로드가 하드웨어 기반의 암호화를 통해 보호됨
     for_each = local.confidential_node_config
     content {
       enabled = confidential_nodes.value.enabled
@@ -74,13 +74,13 @@ resource "google_container_cluster" "primary" {
 
   subnetwork = "projects/${local.network_project_id}/regions/${local.region}/subnetworks/${var.subnetwork}"
 
-  default_snat_status {
+  default_snat_status { ## SNAT (Source Network Address Translation) 기능을 활성화 또는 비활성화하는 설정
     disabled = var.disable_default_snat
-  }
+  } ## default_snat_status를 disabled = true로 설정하면, Pod가 자체 IP를 사용하여 외부에 직접 연결할 수 있음.
 
-  min_master_version = var.release_channel == null || var.release_channel == "UNSPECIFIED" ? local.master_version : var.kubernetes_version == "latest" ? null : var.kubernetes_version
+  min_master_version = var.release_channel == null || var.release_channel == "UNSPECIFIED" ? local.master_version : var.kubernetes_version == "latest" ? null : var.kubernetes_version ## Control Plane (마스터 노드)의 최소 Kubernetes 버전을 설정하는 옵션
 
-  dynamic "logging_config" {
+  dynamic "logging_config" { ## 어떤 로그를 수집하고 Google Cloud Logging(Stackdriver)에 보낼지 결정
     for_each = length(var.logging_enabled_components) > 0 ? [1] : []
 
     content {
@@ -88,7 +88,7 @@ resource "google_container_cluster" "primary" {
     }
   }
 
-  dynamic "monitoring_config" {
+  dynamic "monitoring_config" {  ## 어떤 메트릭을 수집하고 Google Cloud Monitoring(Stackdriver)에 보낼지 결정
     for_each = local.logmon_config_is_set ? [1] : []
     content {
       enable_components = var.monitoring_enabled_components
@@ -108,8 +108,8 @@ resource "google_container_cluster" "primary" {
 
   cluster_autoscaling {
     enabled = var.cluster_autoscaling.enabled
-    dynamic "auto_provisioning_defaults" {
-      for_each = var.cluster_autoscaling.enabled ? [1] : []
+    dynamic "auto_provisioning_defaults" { ## GKE의 Cluster Autoscaler가 새로운 노드를 자동으로 추가할 때 사용할 기본 설정을 정의할 수 있음.
+      for_each = var.cluster_autoscaling.enabled ? [1] : [] ## 새로 생성되는 노드의 기본 스펙을 auto_provisioning_defaults에서 설정
 
       content {
         service_account = local.service_account
@@ -153,8 +153,8 @@ resource "google_container_cluster" "primary" {
         image_type = lookup(var.cluster_autoscaling, "image_type", "COS_CONTAINERD")
       }
     }
-    autoscaling_profile = var.cluster_autoscaling.autoscaling_profile != null ? var.cluster_autoscaling.autoscaling_profile : "BALANCED"
-    dynamic "resource_limits" {
+    autoscaling_profile = var.cluster_autoscaling.autoscaling_profile != null ? var.cluster_autoscaling.autoscaling_profile : "BALANCED" ## 클러스터 자동 확장(Cluster Autoscaler)의 동작 방식을 결정하는 설정
+    dynamic "resource_limits" { ## 오토스케일링(Cluster Autoscaler)이 자동으로 추가할 수 있는 리소스(CPU, 메모리 등)의 최소 및 최대 값을 제한하는 설정
       for_each = local.autoscaling_resource_limits
       content {
         resource_type = resource_limits.value["resource_type"]
@@ -163,44 +163,44 @@ resource "google_container_cluster" "primary" {
       }
     }
   }
-  vertical_pod_autoscaling {
+  vertical_pod_autoscaling { ## GKE에서 실행 중인 Pod의 CPU 및 메모리 요청/제한 값을 자동으로 조정하는 기능
     enabled = var.enable_vertical_pod_autoscaling
   }
-  default_max_pods_per_node = var.default_max_pods_per_node
-  enable_shielded_nodes     = var.enable_shielded_nodes
+  default_max_pods_per_node = var.default_max_pods_per_node ## 각 노드(Node)당 최대 Pod 개수를 설정하는 옵션 ## 기본값 110개
+  enable_shielded_nodes     = var.enable_shielded_nodes ## Google Cloud에서 제공하는 강화된 보안 기능을 갖춘 가상 머신(VM)으로, 부팅 과정과 시스템 무결성을 보호하여 루트킷, 커널 악성코드, 부팅 프로세스 공격 등을 방지
 
-  dynamic "binary_authorization" {
+  dynamic "binary_authorization" { ## 컨테이너 이미지의 무결성을 검증하고, 승인된 이미지만 실행할 수 있도록 보안 정책을 적용하는 기능
     for_each = var.enable_binary_authorization ? [var.enable_binary_authorization] : []
     content {
       evaluation_mode = "PROJECT_SINGLETON_POLICY_ENFORCE"
     }
   }
 
-  dynamic "identity_service_config" {
+  dynamic "identity_service_config" { ## Workload Identity Federation을 활성화하는 설정
     for_each = var.enable_identity_service != null ? [var.enable_identity_service] : []
     content {
       enabled = identity_service_config.value
     }
-  }
+  } ## Kubernetes 서비스 계정(KSA)과 Google Cloud IAM 서비스 계정(GSA)을 안전하게 연결하여 GCP 리소스에 접근
 
-  enable_kubernetes_alpha     = var.enable_kubernetes_alpha
-  enable_tpu                  = var.enable_tpu
-  enable_intranode_visibility = var.enable_intranode_visibility
+  enable_kubernetes_alpha     = var.enable_kubernetes_alpha ## Alpha 기능은 실험적이므로 프로덕션 환경에서는 사용하면 안 됩니다.
+  enable_tpu                  = var.enable_tpu ## TPU(Tensor Processing Unit) 를 사용할 수 있습니다. TPU는 Google이 개발한 AI/ML 워크로드를 위한 고성능 머신 러닝 칩
+  enable_intranode_visibility = var.enable_intranode_visibility ## 같은 노드에 있는 Pod 간의 트래픽도 VPC 흐름 로그에 기록됨. 즉, 노드 내부에서 발생하는 Pod-to-Pod 통신도 모니터링 가능
 
 
-  enable_l4_ilb_subsetting = var.enable_l4_ilb_subsetting
+  enable_l4_ilb_subsetting = var.enable_l4_ilb_subsetting ## L4 내부 로드밸런서(ILB, Internal Load Balancer)가 더 효율적으로 트래픽을 분배하도록 설정하는 기능입니다. 즉, 로드밸런서가 서비스 엔드포인트 중 일부 서브셋(Subsetting)만 선택하여 트래픽을 라우팅할 수 있도록 함.
 
-  enable_cilium_clusterwide_network_policy = var.enable_cilium_clusterwide_network_policy
+  enable_cilium_clusterwide_network_policy = var.enable_cilium_clusterwide_network_policy ## Cilium 기반의 네트워크 정책을 사용할 수 있습니다. Cilium은 고성능 eBPF 기반 네트워크 보안 솔루션으로, 기존 Kubernetes 네트워크 정책보다 더 강력한 기능을 제공
 
-  dynamic "secret_manager_config" {
+  dynamic "secret_manager_config" { ## Google Cloud Secret Manager를 통합하여 Kubernetes 워크로드가 안전하게 비밀(Secrets)을 사용할 수 있도록 하는 기능
     for_each = var.enable_secret_manager_addon ? [var.enable_secret_manager_addon] : []
     content {
       enabled = secret_manager_config.value
     }
   }
 
-  enable_fqdn_network_policy = var.enable_fqdn_network_policy
-  dynamic "master_authorized_networks_config" {
+  enable_fqdn_network_policy = var.enable_fqdn_network_policy ## GKE에서 특정 Fully Qualified Domain Name(FQDN, 완전한 도메인 이름)에 대한 네트워크 정책을 적용할 수 있습니다. 즉, Pod이 특정 도메인(FQDN)과의 통신을 허용하거나 차단하는 네트워크 정책을 정의할 수 있음.
+  dynamic "master_authorized_networks_config" { ## 마스터(Control Plane) 노드에 대한 접근을 특정 IP 주소 범위(Authorized Networks)로 제한하는 기능
     for_each = var.enable_private_endpoint || var.gcp_public_cidrs_access_enabled != null || length(var.master_authorized_networks) > 0 ? [true] : []
     content {
       gcp_public_cidrs_access_enabled = var.gcp_public_cidrs_access_enabled
@@ -214,7 +214,7 @@ resource "google_container_cluster" "primary" {
     }
   }
 
-  dynamic "node_pool_auto_config" {
+  dynamic "node_pool_auto_config" { ## 노드 풀(Node Pool)의 기본 보안 및 네트워크 설정을 자동으로 적용하는 기능입니다. 즉, Google이 추천하는 보안 및 네트워크 설정을 자동으로 활성화하여 클러스터 보안을 강화할 수 있음.
     for_each = var.cluster_autoscaling.enabled && (length(var.network_tags) > 0 || var.add_cluster_firewall_rules) ? [1] : []
     content {
       network_tags {
@@ -223,13 +223,13 @@ resource "google_container_cluster" "primary" {
     }
   }
 
-  master_auth {
+  master_auth { ## GKE의 API 서버(Control Plane)에 대한 인증(Authorization) 및 접근 권한을 설정하는 옵션입니다. 즉, GKE의 마스터(Control Plane)에 접속할 때 어떤 방식으로 인증할지 결정
     client_certificate_config {
       issue_client_certificate = var.issue_client_certificate
     }
   }
 
-  dynamic "service_external_ips_config" {
+  dynamic "service_external_ips_config" { ## GKE의 Service에서 외부 IP를 사용할 수 있도록 허용하거나 제한할 수 있습니다. 즉, 서비스에 Public IP를 할당할 수 있는지 여부를 설정하는 기능.
     for_each = var.service_external_ips ? [1] : []
     content {
       enabled = var.service_external_ips
@@ -237,39 +237,39 @@ resource "google_container_cluster" "primary" {
   }
 
   addons_config {
-    http_load_balancing {
+    http_load_balancing { ## ALB
       disabled = !var.http_load_balancing
     }
 
-    horizontal_pod_autoscaling {
+    horizontal_pod_autoscaling { ## HPA
       disabled = !var.horizontal_pod_autoscaling
     }
 
-    gcp_filestore_csi_driver_config {
+    gcp_filestore_csi_driver_config { ## Filestore CSI 드라이버 활성화
       enabled = var.filestore_csi_driver
     }
 
-    network_policy_config {
+    network_policy_config { ## Kubernetes 네트워크 정책(NetworkPolicy)을 사용할 수 있도록 활성화하는 옵션. 네트워크 정책을 사용하면 Pod 간 통신을 세부적으로 제어 가능.
       disabled = !var.network_policy
     }
 
-    dns_cache_config {
+    dns_cache_config { ## NodeLocal DNSCache
       enabled = var.dns_cache
     }
 
-    dynamic "gce_persistent_disk_csi_driver_config" {
-      for_each = local.cluster_gce_pd_csi_config
+    dynamic "gce_persistent_disk_csi_driver_config" { ## Google Persistent Disk(GCE PD) 사용을 위한 CSI 드라이버 활성화.
+      for_each = local.cluster_gce_pd_csi_config ## var.gce_pd_csi_driver ? [{ enabled = true }] : [{ enabled = false }]
 
       content {
         enabled = gce_persistent_disk_csi_driver_config.value.enabled
       }
     }
 
-    config_connector_config {
+    config_connector_config { ## Kubernetes 리소스를 통해 GCP 리소스를 관리할 수 있도록 설정.
       enabled = var.config_connector
     }
 
-    dynamic "gcs_fuse_csi_driver_config" {
+    dynamic "gcs_fuse_csi_driver_config" { ## Google Cloud Storage(GCS)를 파일 시스템으로 마운트할 수 있도록 지원하는 옵션.
       for_each = local.gcs_fuse_csi_driver_config
 
       content {
@@ -277,7 +277,7 @@ resource "google_container_cluster" "primary" {
       }
     }
 
-    dynamic "gke_backup_agent_config" {
+    dynamic "gke_backup_agent_config" { ## 워크로드 백업 및 복원을 지원하는 기능.
       for_each = local.gke_backup_agent_config
 
       content {
@@ -285,7 +285,7 @@ resource "google_container_cluster" "primary" {
       }
     }
 
-    dynamic "stateful_ha_config" {
+    dynamic "stateful_ha_config" { ## Stateful 애플리케이션의 고가용성을 보장하기 위한 기능.
       for_each = local.stateful_ha_config
 
       content {
@@ -293,7 +293,7 @@ resource "google_container_cluster" "primary" {
       }
     }
 
-    dynamic "ray_operator_config" {
+    dynamic "ray_operator_config" { ## Ray(분산 컴퓨팅 프레임워크)를 실행할 수 있도록 활성화하는 기능.
       for_each = local.ray_operator_config
 
       content {
@@ -866,8 +866,10 @@ resource "google_container_node_pool" "pools" {
   }
 
   lifecycle {
-    ignore_changes = [initial_node_count]
-
+    ignore_changes = [
+      initial_node_count,
+      node_config[0].oauth_scopes
+    ]
   }
 
   timeouts {
